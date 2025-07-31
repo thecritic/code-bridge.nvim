@@ -49,18 +49,48 @@ M.send_to_claude_tmux = function(opts)
   vim.fn.system('tmux display-message -p "#{session_name}" 2>/dev/null')
   if check_shell_error("no tmux session") then return end
 
-  -- Check if claude window exists
-  vim.fn.system('tmux list-windows -F "#{window_name}" 2>/dev/null | grep -x claude')
-  if check_shell_error('no claude window') then return end
+  local target_window = nil
+  local is_claude_session = false
 
-  -- Send context to claude window
-  vim.fn.system('tmux send-keys -t claude ' .. vim.fn.shellescape(context) .. ' Enter')
+  -- First, check if claude window exists in current session
+  vim.fn.system('tmux list-windows -F "#{window_name}" 2>/dev/null | grep -x claude')
+  if vim.v.shell_error == 0 then
+    target_window = 'claude'
+  else
+    -- Check if a scratch session exists with claude window
+    vim.fn.system('tmux list-sessions -F "#{session_name}" 2>/dev/null | grep -x scratch')
+    if vim.v.shell_error == 0 then
+      -- Find the first window in the claude session
+      local claude_window = vim.fn.system('tmux list-windows -t scratch -F "#{window_name}" 2>/dev/null | head -1'):gsub(
+        '%s+$', '')
+      if claude_window ~= '' then
+        target_window = 'scratch:' .. claude_window
+        is_claude_session = true
+      end
+    end
+  end
+
+  if not target_window then
+    check_shell_error('no claude window found')
+    return
+  end
+
+  -- Send context to claude window/session
+  vim.fn.system('tmux send-keys -t ' ..
+    vim.fn.shellescape(target_window) .. ' ' .. vim.fn.shellescape(context) .. ' Enter')
   if check_shell_error("failed to send to claude") then return end
 
-  -- Switch to claude window
-  vim.fn.system('tmux select-window -t claude')
-  if vim.v.shell_error ~= 0 then
-    print("sent to claude but failed to switch window - please check manually")
+  -- Switch to claude window or recreate popup for claude session
+  if is_claude_session then
+    vim.fn.system('tmux popup -w 80% -h 80% -b rounded -E "tmux attach-session -t scratch"')
+    if vim.v.shell_error ~= 0 then
+      print("sent to claude but failed to create popup - please check manually")
+    end
+  else
+    vim.fn.system('tmux select-window -t ' .. vim.fn.shellescape(target_window))
+    if vim.v.shell_error ~= 0 then
+      print("sent to claude but failed to switch window - please check manually")
+    end
   end
 end
 
